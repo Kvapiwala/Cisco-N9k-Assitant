@@ -1,6 +1,8 @@
 {
-  "assistant_name": "KV Helpful Paper Reader",
-  "assistant_instructions": "Generate per interferace configurations based on the user intent/prompt, understand the provided topology and use the given reference to put commands that will peform the given task using Cisco N9K commands",
+  "app_name": "Cisco N9K Assistant",
+  "assistant_name": "Nexus TWO",
+  "assistant_instructions": "Generate per interferace configurations based on the user intent/prompt, understand the provided topology and use the given reference to put commands that will peform the given task using Cisco N9K commands, help debug too and fix networks, be able to understand why something is broken and give commands to fix it",
+  "welcome_message": "Need help with configuration? I got you",
   "model": "gpt-4o-mini",
   "vector_store_id": "vs_6a4eb89b387c819180367f1295e8e0a5"
 }

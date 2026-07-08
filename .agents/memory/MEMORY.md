@@ -1,0 +1,1 @@
+- [OpenAI Responses API file uploads](openai-responses-file-uploads.md) — per-turn `input_file` parts (works for txt) combine with a fixed file_search vector store; no Assistants-style attachments.

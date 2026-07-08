@@ -1,0 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 50% 5%;
+    --foreground: 210 20% 90%;
+    
+    --card: 210 50% 8%;
+    --card-foreground: 210 20% 90%;
+    
+    --popover: 210 50% 8%;
+    --popover-foreground: 210 20% 90%;
+    
+    --primary: 195 100% 46%; /* Cisco cyan */
+    --primary-foreground: 210 50% 5%;
+    
+    --secondary: 210 30% 15%;
+    --secondary-foreground: 210 20% 90%;
+    
+    --muted: 210 30% 15%;
+    --muted-foreground: 210 20% 65%;
+    
+    --accent: 195 100% 46%;
+    --accent-foreground: 210 50% 5%;
+    
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 20% 90%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 210 20% 90%;
+
+    --border: 210 30% 20%;
+    --input: 210 30% 20%;
+    --ring: 195 100% 46%;
+
+    --radius: 0.25rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', sans-serif;
+  }
+  code, pre, .font-mono {
+    font-family: 'Fira Code', monospace;
+  }
+}
+
+/* Scrollbar styling for NOC feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--background));
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
