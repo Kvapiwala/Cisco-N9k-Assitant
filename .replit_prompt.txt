@@ -1,0 +1,32 @@
+Build a chat app called "Cisco N9K Assistant". It is an OpenAI assistant named "Nexus TWO". Unzip `replit_project.zip` first. Pick whichever stack you think will produce the nicest-looking app. Python or TypeScript/React are both fine.
+
+ABOUT THE CORPUS: Cisco N9k COmmand References (already lives in an OpenAI vector store; load it and keep it as-is, do not rebuild the corpus.)
+WELCOME MESSAGE: Need help with configuration? I got you
+HOW IT SHOULD WORK: Have a different window for each device cli, have a visual segment for the topology and interfaces connected, interface is clickable and you can view commands on that interface
+VISUAL STYLE: Dark themed, cisco themed
+
+ASSISTANT SYSTEM PROMPT (use verbatim):
+Generate per interferace configurations based on the user intent/prompt, understand the provided topology and use the given reference to put commands that will peform the given task using Cisco N9K commands, help debug too and fix networks, be able to understand why something is broken and give commands to fix it
+
+VISUAL POLISH. Aim for a polished, product-quality UI:
+- Follow the app's visual style.
+- Display the assistant's name and welcome message.
+- 3 to 4 suggested starter questions the user can click if relevant.
+- Style citations as expandable references, not raw text.
+- Make it feel like a real product, not a default chat demo.
+
+IMPLEMENTATION. Must do:
+- Read the OpenAI API key from environment variables. NEVER hardcode it.
+  Python: `os.environ["OPENAI_API_KEY"]`
+  Node/TypeScript: `process.env.OPENAI_API_KEY`
+  Replit's Secrets are exposed as env vars, so this is how the app reads the key.
+- Use the OpenAI **Responses API** (`client.responses.create()`), NOT the deprecated Assistants API.
+- OpenAI SDK v2 API paths: `client.vector_stores` is TOP-LEVEL. `client.responses` is also TOP-LEVEL.
+- Do NOT use `client.beta.assistants`, `client.beta.threads`, or `client.beta.runs` — those are deprecated.
+- Load `vector_store_id` from `config.json` and keep this vector store attached and unchanged — it already holds the full corpus, so do not rebuild or re-upload the corpus.
+- Let users upload their own documents in the chat. Upload each file to OpenAI with `purpose="assistants"`, then attach it to that user's message using `attachments=[{"file_id": file_id, "tools": [{"type": "file_search"}]}]`. The Assistants API then searches BOTH the existing corpus vector store and the uploaded file, so the original corpus is always used and uploads stay scoped to that conversation. `file_search` reads text documents (PDF, txt, docx, md), not images.
+- At startup: read `assistant_name`, `assistant_instructions`, and `vector_store_id` from `config.json`. No need to create an assistant object — just use these values in each `client.responses.create()` call.
+- For each user message call: `client.responses.create(model=model, instructions=assistant_instructions, input=user_message, tools=[{"type": "file_search", "vector_store_ids": [vector_store_id]}], previous_response_id=prev_id)` (omit `previous_response_id` for the first message in a session).
+- Store the returned `response.id` as `previous_response_id` to chain conversation turns.
+- Chat interface: streaming responses with citations.
+- Response text: `response.output_text`. Citations are in `response.output[i].content[j].annotations` where `ann.type == "file_citation"` and `ann.filename` gives the source file name.
