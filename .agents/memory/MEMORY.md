@@ -1,1 +1,2 @@
 - [OpenAI Responses API file uploads](openai-responses-file-uploads.md) — per-turn `input_file` parts (works for txt) combine with a fixed file_search vector store; no Assistants-style attachments.
+- [Responses API structured output](openai-responses-structured-output.md) — config goes under text.format (json_schema, strict), not response_format; parse output_text.

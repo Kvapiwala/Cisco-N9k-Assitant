@@ -17,10 +17,15 @@ export interface NetInterface {
 export interface NetDevice {
   id: string;
   name: string;
-  role: "spine" | "leaf" | "border";
+  role: string;
   model: string;
   mgmtIp: string;
   interfaces: NetInterface[];
+}
+
+export interface Topology {
+  devices: NetDevice[];
+  links: NetLink[];
 }
 
 export interface NetLink {
@@ -46,7 +51,7 @@ export async function fetchConfig(): Promise<AppConfig> {
   return res.json();
 }
 
-export async function fetchTopology(): Promise<{ devices: NetDevice[]; links: NetLink[] }> {
+export async function fetchTopology(): Promise<Topology> {
   const res = await fetch("/api/topology");
   if (!res.ok) throw new Error("Failed to load topology");
   return res.json();
@@ -68,6 +73,7 @@ export interface StreamHandlers {
   onCitation: (citation: Citation) => void;
   onDone: (payload: { responseId: string; citations: Citation[] }) => void;
   onError: (message: string) => void;
+  onTopology?: (topology: Topology) => void;
 }
 
 /**
@@ -127,6 +133,7 @@ export function streamChat(
           else if (event === "citation") handlers.onCitation(parsed);
           else if (event === "done") handlers.onDone(parsed);
           else if (event === "error") handlers.onError(parsed.error);
+          else if (event === "topology") handlers.onTopology?.(parsed);
         }
       }
     } catch (err: any) {

@@ -6,7 +6,7 @@ A dark, Cisco-themed chat app powered by an OpenAI assistant named "Nexus TWO". 
 ## Architecture
 - **Backend**: Express + TypeScript (`server/`), run with tsx. Serves the API and the Vite dev middleware on port 5000.
   - `GET /api/config` — assistant name, welcome message, starter questions (from `config.json`)
-  - `GET /api/topology` — sample spine-leaf fabric (devices, interfaces, links) defined in `server/topology.ts`
+  - `GET /api/topology` — current topology (starts EMPTY; `server/topology.ts` holds mutable in-memory state). Topology is built dynamically: each chat message runs a concurrent structured-output extraction call (`extractTopology` in `server/routes.ts`); if the message describes/changes the network, the server commits it (with a revision guard against stale concurrent extractions) and emits an SSE `topology` event that the client renders (dynamic role-grouped sidebar + diagram).
   - `POST /api/upload` — uploads a user document to OpenAI (`purpose: "assistants"`), returns `fileId`
   - `POST /api/chat` — SSE stream. Uses the OpenAI **Responses API** (`client.responses.create`) with `file_search` bound to the corpus vector store, `previous_response_id` chaining per conversation, and uploaded files attached as `input_file` content parts.
 - **Frontend**: React 18 + Vite + Tailwind CSS v3 (`client/`). API helpers in `client/src/lib/api.ts`.

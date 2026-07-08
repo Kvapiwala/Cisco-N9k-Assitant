@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { fetchConfig, fetchTopology, AppConfig, NetDevice, NetLink, NetInterface, streamChat, Citation, UploadedFile, uploadFile } from "./lib/api";
+import { fetchConfig, fetchTopology, AppConfig, NetDevice, NetInterface, Topology, streamChat, Citation, UploadedFile, uploadFile } from "./lib/api";
 import { Terminal, Network, AlertCircle, FileText, X, Send, Paperclip, ChevronRight, ChevronDown, CheckCircle2, XCircle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "./lib/utils";
@@ -20,7 +20,7 @@ type Conversation = {
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
-  const [topology, setTopology] = useState<{ devices: NetDevice[]; links: NetLink[] } | null>(null);
+  const [topology, setTopology] = useState<Topology>({ devices: [], links: [] });
   const [activeSession, setActiveSession] = useState<string>("fabric"); // "fabric" or deviceId
   
   // Conversations mapping: session ID -> Conversation
@@ -33,7 +33,18 @@ export default function App() {
     fetchTopology().then(setTopology).catch(console.error);
   }, []);
 
-  if (!config || !topology) {
+  // If the active device session no longer exists after a topology change,
+  // fall back to the fabric-wide session.
+  useEffect(() => {
+    if (activeSession !== "fabric" && !topology.devices.some(d => d.id === activeSession)) {
+      setActiveSession("fabric");
+    }
+    if (selectedInterface && !topology.devices.some(d => d.id === selectedInterface.device.id)) {
+      setSelectedInterface(null);
+    }
+  }, [topology, activeSession, selectedInterface]);
+
+  if (!config) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background text-primary font-mono text-xl">
         <div className="flex flex-col items-center gap-4">
@@ -64,6 +75,7 @@ export default function App() {
           deviceName={activeSession === "fabric" ? "Global Fabric" : topology.devices.find(d => d.id === activeSession)?.name}
           pendingAsk={pendingAsk}
           clearPendingAsk={() => setPendingAsk(null)}
+          onTopology={setTopology}
         />
       </main>
       <aside className="w-[400px] h-screen bg-card flex flex-col overflow-y-auto">
@@ -88,13 +100,29 @@ export default function App() {
   );
 }
 
+const ROLE_ORDER = ["spine", "leaf", "switch", "router", "firewall", "host"];
+
+function roleGroups(devices: NetDevice[]): { role: string; devices: NetDevice[] }[] {
+  const roles = Array.from(new Set(devices.map(d => d.role)));
+  roles.sort((a, b) => {
+    const ia = ROLE_ORDER.indexOf(a);
+    const ib = ROLE_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  return roles.map(role => ({ role, devices: devices.filter(d => d.role === role) }));
+}
+
+function rolePlural(role: string): string {
+  if (role === "switch") return "Switches";
+  return role.charAt(0).toUpperCase() + role.slice(1) + "s";
+}
+
 function Sidebar({ topology, activeSession, setActiveSession }: { 
   topology: { devices: NetDevice[] }, 
   activeSession: string, 
   setActiveSession: (id: string) => void 
 }) {
-  const spines = topology.devices.filter(d => d.role === "spine");
-  const leafs = topology.devices.filter(d => d.role === "leaf");
+  const groups = roleGroups(topology.devices);
 
   const NavItem = ({ id, name, icon: Icon }: { id: string, name: string, icon: any }) => (
     <button
@@ -121,12 +149,19 @@ function Sidebar({ topology, activeSession, setActiveSession }: {
       <div className="flex-1 overflow-y-auto py-4">
         <div className="px-4 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Scope</div>
         <NavItem id="fabric" name="Global Fabric" icon={Network} />
-        
-        <div className="px-4 mt-6 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Spines</div>
-        {spines.map(d => <NavItem key={d.id} id={d.id} name={d.name} icon={Terminal} />)}
-        
-        <div className="px-4 mt-6 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Leafs</div>
-        {leafs.map(d => <NavItem key={d.id} id={d.id} name={d.name} icon={Terminal} />)}
+
+        {groups.map(g => (
+          <div key={g.role}>
+            <div className="px-4 mt-6 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">{rolePlural(g.role)}</div>
+            {g.devices.map(d => <NavItem key={d.id} id={d.id} name={d.name} icon={Terminal} />)}
+          </div>
+        ))}
+
+        {topology.devices.length === 0 && (
+          <div className="px-4 mt-6 text-xs text-muted-foreground leading-relaxed">
+            No devices yet. Describe your topology in the chat (e.g. "I have a p2p topology with 2 switches") and device sessions will appear here.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -139,7 +174,8 @@ function ChatWindow({
   setConversation,
   deviceName,
   pendingAsk,
-  clearPendingAsk
+  clearPendingAsk,
+  onTopology
 }: { 
   config: AppConfig, 
   deviceId?: string, 
@@ -147,7 +183,8 @@ function ChatWindow({
   setConversation: React.Dispatch<React.SetStateAction<Conversation>>,
   deviceName?: string,
   pendingAsk?: string | null,
-  clearPendingAsk?: () => void
+  clearPendingAsk?: () => void,
+  onTopology?: (t: Topology) => void
 }) {
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -228,6 +265,9 @@ function ChatWindow({
           messages: prev.messages.map(m => m.id === assistantMsgId ? { ...m, isStreaming: false, content: m.content + `\n\n**Error:** ${err}` } : m)
         }));
         setIsSending(false);
+      },
+      onTopology: (t) => {
+        onTopology?.(t);
       }
     });
   };
@@ -374,35 +414,41 @@ function CitationList({ citations }: { citations: Citation[] }) {
   );
 }
 
-function TopologyView({ topology, onSelectInterface }: { topology: { devices: NetDevice[], links: NetLink[] }, onSelectInterface: (d: NetDevice, i: NetInterface) => void }) {
-  const spines = topology.devices.filter(d => d.role === "spine");
-  const leafs = topology.devices.filter(d => d.role === "leaf");
+function TopologyView({ topology, onSelectInterface }: { topology: Topology, onSelectInterface: (d: NetDevice, i: NetInterface) => void }) {
+  const groups = roleGroups(topology.devices);
 
   return (
     <div className="p-6 border-b border-border flex-1">
       <h3 className="font-mono text-sm font-semibold mb-6 flex items-center gap-2">
         <Network className="w-4 h-4" /> Fabric Topology
       </h3>
-      
-      <div className="space-y-8">
-        <div className="space-y-3">
-          <div className="text-xs text-muted-foreground font-mono uppercase text-center tracking-widest">Spine Layer</div>
-          <div className="flex justify-center gap-6">
-            {spines.map(d => (
-              <DeviceNode key={d.id} device={d} onSelectInterface={onSelectInterface} />
-            ))}
+
+      {topology.devices.length === 0 ? (
+        <div className="flex flex-col items-center justify-center text-center gap-3 py-12 px-4 border border-dashed border-border rounded-md">
+          <Network className="w-8 h-8 text-muted-foreground" />
+          <div className="text-sm text-muted-foreground leading-relaxed">
+            No topology defined yet.
+            <br />
+            Tell Nexus TWO about your network — for example:
+          </div>
+          <div className="text-xs font-mono text-primary bg-primary/10 border border-primary/20 rounded px-3 py-2">
+            "I have a p2p topology: SW1 Ethernet1/1 connects to SW2 Ethernet1/1"
           </div>
         </div>
-        
-        <div className="space-y-3">
-          <div className="text-xs text-muted-foreground font-mono uppercase text-center tracking-widest">Leaf Layer</div>
-          <div className="flex justify-center gap-4 flex-wrap">
-            {leafs.map(d => (
-              <DeviceNode key={d.id} device={d} onSelectInterface={onSelectInterface} />
-            ))}
-          </div>
+      ) : (
+        <div className="space-y-8 animate-in fade-in duration-500">
+          {groups.map(g => (
+            <div key={g.role} className="space-y-3">
+              <div className="text-xs text-muted-foreground font-mono uppercase text-center tracking-widest">{g.role} layer</div>
+              <div className="flex justify-center gap-4 flex-wrap">
+                {g.devices.map(d => (
+                  <DeviceNode key={d.id} device={d} onSelectInterface={onSelectInterface} />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -420,7 +466,7 @@ function DeviceNode({ device, onSelectInterface }: { device: NetDevice, onSelect
       <div className="text-[10px] text-muted-foreground mb-3">{device.mgmtIp}</div>
       
       <div className="flex flex-wrap gap-1 justify-center max-w-[120px]">
-        {device.interfaces.filter(i => i.name.startsWith("Ethernet")).map(i => (
+        {device.interfaces.filter(i => i.name !== "mgmt0").map(i => (
           <button 
             key={i.id}
             onClick={() => onSelectInterface(device, i)}
