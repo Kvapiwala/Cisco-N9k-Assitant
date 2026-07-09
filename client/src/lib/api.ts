@@ -32,6 +32,7 @@ export interface NetLink {
   id: string;
   a: { device: string; iface: string };
   b: { device: string; iface: string };
+  status?: "up" | "down";
 }
 
 export interface Citation {
@@ -54,6 +55,22 @@ export async function fetchConfig(): Promise<AppConfig> {
 export async function fetchTopology(): Promise<Topology> {
   const res = await fetch("/api/topology");
   if (!res.ok) throw new Error("Failed to load topology");
+  return res.json();
+}
+
+export async function removeDevice(deviceId: string): Promise<Topology> {
+  const res = await fetch("/api/topology/remove", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ deviceId }),
+  });
+  if (!res.ok) throw new Error("Failed to remove device");
+  return res.json();
+}
+
+export async function clearTopology(): Promise<Topology> {
+  const res = await fetch("/api/topology/clear", { method: "POST" });
+  if (!res.ok) throw new Error("Failed to clear topology");
   return res.json();
 }
 

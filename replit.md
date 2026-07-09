@@ -10,6 +10,9 @@ A dark, Cisco-themed chat app powered by an OpenAI assistant named "Nexus TWO". 
   - `POST /api/upload` — uploads a user document to OpenAI (`purpose: "assistants"`), returns `fileId`
   - `POST /api/chat` — SSE stream. Uses the OpenAI **Responses API** (`client.responses.create`) with `file_search` bound to the corpus vector store, `previous_response_id` chaining per conversation, and uploaded files attached as `input_file` content parts.
 - **Frontend**: React 18 + Vite + Tailwind CSS v3 (`client/`). API helpers in `client/src/lib/api.ts`.
+  - Sidebar groups devices dynamically by role with per-device remove (hover trash icon) + Clear topology button.
+  - TopologyView renders SVG link overlay between device nodes (green solid=up, red dashed/pulsing=down).
+- **Topology accuracy**: spine-leaf fabrics auto-generate full-mesh cross-layer links via `normalizeTopology()`. All mutations bump a version counter; stale extraction results are discarded if topology changed mid-flight.
 - **Config**: `config.json` holds `assistant_name`, `assistant_instructions`, `model`, `vector_store_id`. The vector store already contains the corpus — never rebuild or re-upload it.
 - **Secrets**: `OPENAI_API_KEY` from environment variables (Replit Secrets). Never hardcoded.
 

@@ -3,7 +3,7 @@ import multer from "multer";
 import OpenAI, { toFile } from "openai";
 import fs from "fs";
 import path from "path";
-import { Device, Link, getTopology, setTopology, topologyDescription } from "./topology";
+import { Device, Link, getTopology, setTopology, topologyDescription, removeDevice, clearTopology, normalizeTopology } from "./topology";
 
 const configPath = path.resolve(process.cwd(), "config.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as {
@@ -46,6 +46,23 @@ router.get("/config", (_req, res) => {
 });
 
 router.get("/topology", (_req, res) => {
+  res.json(getTopology());
+});
+
+router.post("/topology/remove", (req, res) => {
+  const { deviceId } = req.body as { deviceId?: string };
+  if (!deviceId || typeof deviceId !== "string") {
+    return res.status(400).json({ error: "deviceId required" });
+  }
+  const removed = removeDevice(deviceId);
+  if (!removed) {
+    return res.status(404).json({ error: "device not found" });
+  }
+  res.json(getTopology());
+});
+
+router.post("/topology/clear", (_req, res) => {
+  clearTopology();
   res.json(getTopology());
 });
 
@@ -127,18 +144,13 @@ const TOPOLOGY_SCHEMA = {
   required: ["changed", "devices", "links"],
 } as const;
 
-// Monotonic sequencing so a slow extraction from an older message can never
-// overwrite topology committed by a newer message.
-let extractionSeq = 0;
-let lastAppliedSeq = 0;
-
 async function extractTopology(userMessage: string): Promise<{ devices: Device[]; links: Link[] } | null> {
-  const seq = ++extractionSeq;
+  const startVersion = getTopology().version; // snapshot version before extraction
   const current = getTopology();
   const response = await client.responses.create({
     model: config.model,
     instructions:
-      "You maintain the network topology model for a Cisco Nexus 9000 assistant. You are given the CURRENT TOPOLOGY as JSON and a USER MESSAGE. Decide whether the message defines, extends, or modifies the network topology (devices, switches, routers, links, interfaces, interface status). If it does, return changed=true and the COMPLETE updated topology (carry over existing devices unless the user replaced or removed them). If the message is not about topology structure (e.g. asking for configuration commands, debugging help, general questions), return changed=false with empty devices and links.\n\nRules:\n- Device ids: short lowercase alphanumeric (sw1, spine1, leaf2).\n- Names: uppercase display names (SW-1, SPINE-1) unless the user names them.\n- Use Cisco N9K interface naming (Ethernet1/1, Ethernet1/2, ...). If the user gives a topology without interface details (e.g. 'p2p topology with 2 switches'), invent sensible interfaces for the links.\n- Every link endpoint must reference an existing device id and one of its interface names, and the two endpoint interfaces must reference each other via connectedToDevice/connectedToInterface.\n- model: a plausible Nexus 9000 model (e.g. N9K-C93180YC-FX3) unless the user specifies one. mgmtIp: keep existing or use empty string if unknown.\n- Interface status defaults to 'up' unless the user says it is down/broken.",
+      "You maintain the network topology model for a Cisco Nexus 9000 assistant. You are given the CURRENT TOPOLOGY as JSON and a USER MESSAGE. Decide whether the message defines, extends, modifies, or removes the network topology (devices, switches, routers, links, interfaces, interface status). If it does, return changed=true and the COMPLETE updated topology (carry over existing devices unless the user replaced or removed them). If the message is not about topology structure (e.g. asking for configuration commands, debugging help, general questions), return changed=false with empty devices and links.\n\nRules:\n- Device ids: short lowercase alphanumeric (sw1, spine1, leaf2).\n- Names: uppercase display names (SW-1, SPINE-1) unless the user names them.\n- Use Cisco N9K interface naming (Ethernet1/1, Ethernet1/2, ...). If the user gives a topology without interface details (e.g. 'p2p topology with 2 switches'), invent sensible interfaces for the links.\n- Every link endpoint must reference an existing device id and one of its interface names, and the two endpoint interfaces must reference each other via connectedToDevice/connectedToInterface.\n- For a SPINE-LEAF fabric: EVERY leaf must be connected to EVERY spine (full-mesh between layers). Generate all cross-layer links + interfaces automatically.\n- For a P2P topology: only the explicitly described devices are linked.\n- model: a plausible Nexus 9000 model (e.g. N9K-C93180YC-FX3) unless the user specifies one. mgmtIp: keep existing or use empty string if unknown.\n- Interface status defaults to 'up' unless the user says it is down/broken.\n- If the user says to remove/delete a device, exclude it from the returned devices and remove all links involving it.",
     input: `CURRENT TOPOLOGY:\n${JSON.stringify(current)}\n\nUSER MESSAGE:\n${userMessage}`,
     text: {
       format: {
@@ -182,12 +194,13 @@ async function extractTopology(userMessage: string): Promise<{ devices: Device[]
       b: { device: l.bDevice, iface: l.bInterface },
     }));
 
-  if (seq < lastAppliedSeq) {
-    // A newer message already committed a topology; discard this stale result.
+  if (getTopology().version !== startVersion) {
+    // The topology was mutated (removed/cleared/normalized) during extraction;
+    // discard this stale result to avoid resurrecting deleted devices/links.
     return null;
   }
-  lastAppliedSeq = seq;
   setTopology(devices, links);
+  normalizeTopology(); // Auto-fill missing spine-leaf full-mesh links
   return getTopology();
 }
 

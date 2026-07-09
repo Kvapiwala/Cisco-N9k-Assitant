@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { fetchConfig, fetchTopology, AppConfig, NetDevice, NetInterface, Topology, streamChat, Citation, UploadedFile, uploadFile } from "./lib/api";
-import { Terminal, Network, AlertCircle, FileText, X, Send, Paperclip, ChevronRight, ChevronDown, CheckCircle2, XCircle } from "lucide-react";
+import { fetchConfig, fetchTopology, AppConfig, NetDevice, NetInterface, Topology, streamChat, Citation, UploadedFile, uploadFile, removeDevice, clearTopology } from "./lib/api";
+import { Terminal, Network, AlertCircle, FileText, X, Send, Paperclip, ChevronRight, ChevronDown, CheckCircle2, XCircle, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "./lib/utils";
 
@@ -61,6 +61,7 @@ export default function App() {
         topology={topology} 
         activeSession={activeSession} 
         setActiveSession={setActiveSession} 
+        onTopologyChange={setTopology}
       />
       <main className="flex-1 flex flex-col h-screen overflow-hidden border-r border-border">
         <ChatWindow 
@@ -117,24 +118,39 @@ function rolePlural(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1) + "s";
 }
 
-function Sidebar({ topology, activeSession, setActiveSession }: { 
+function Sidebar({ topology, activeSession, setActiveSession, onTopologyChange }: { 
   topology: { devices: NetDevice[] }, 
   activeSession: string, 
-  setActiveSession: (id: string) => void 
+  setActiveSession: (id: string) => void,
+  onTopologyChange: (t: Topology) => void
 }) {
   const groups = roleGroups(topology.devices);
 
-  const NavItem = ({ id, name, icon: Icon }: { id: string, name: string, icon: any }) => (
-    <button
-      onClick={() => setActiveSession(id)}
-      className={cn(
-        "w-full flex items-center gap-3 px-4 py-2 text-sm text-left transition-colors font-mono",
-        activeSession === id ? "bg-primary/20 text-primary border-r-2 border-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+  const NavItem = ({ id, name, icon: Icon, onRemove }: { id: string, name: string, icon: any, onRemove?: () => void }) => (
+    <div className={cn(
+      "group flex items-center",
+      activeSession === id ? "bg-primary/20 border-r-2 border-primary" : "hover:bg-secondary"
+    )}>
+      <button
+        onClick={() => setActiveSession(id)}
+        className={cn(
+          "flex-1 flex items-center gap-3 px-4 py-2 text-sm text-left transition-colors font-mono",
+          activeSession === id ? "text-primary" : "text-muted-foreground hover:text-foreground"
+        )}
+      >
+        <Icon className="w-4 h-4" />
+        {name}
+      </button>
+      {onRemove && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          className="opacity-0 group-hover:opacity-100 mr-2 text-muted-foreground hover:text-destructive transition-opacity p-1 rounded"
+          title="Remove device"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
       )}
-    >
-      <Icon className="w-4 h-4" />
-      {name}
-    </button>
+    </div>
   );
 
   return (
@@ -153,7 +169,15 @@ function Sidebar({ topology, activeSession, setActiveSession }: {
         {groups.map(g => (
           <div key={g.role}>
             <div className="px-4 mt-6 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">{rolePlural(g.role)}</div>
-            {g.devices.map(d => <NavItem key={d.id} id={d.id} name={d.name} icon={Terminal} />)}
+            {g.devices.map(d => (
+              <NavItem 
+                key={d.id} 
+                id={d.id} 
+                name={d.name} 
+                icon={Terminal} 
+                onRemove={() => removeDevice(d.id).then(onTopologyChange).catch(console.error)}
+              />
+            ))}
           </div>
         ))}
 
@@ -163,6 +187,21 @@ function Sidebar({ topology, activeSession, setActiveSession }: {
           </div>
         )}
       </div>
+
+      {topology.devices.length > 0 && (
+        <div className="p-4 border-t border-border">
+          <button
+            onClick={() => {
+              if (confirm("Clear all devices and links?")) {
+                clearTopology().then(onTopologyChange).catch(console.error);
+              }
+            }}
+            className="w-full text-xs text-muted-foreground hover:text-destructive transition-colors flex items-center justify-center gap-1.5 py-1"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Clear topology
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -416,15 +455,68 @@ function CitationList({ citations }: { citations: Citation[] }) {
 
 function TopologyView({ topology, onSelectInterface }: { topology: Topology, onSelectInterface: (d: NetDevice, i: NetInterface) => void }) {
   const groups = roleGroups(topology.devices);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const deviceRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [linkLines, setLinkLines] = useState<{ id: string; x1: number; y1: number; x2: number; y2: number; up: boolean }[]>([]);
+
+  // Recalculate link lines whenever topology changes or window resizes.
+  useEffect(() => {
+    const recalc = () => {
+      const container = containerRef.current;
+      if (!container || topology.devices.length === 0) { setLinkLines([]); return; }
+      const cRect = container.getBoundingClientRect();
+      const deviceRects: Record<string, { cx: number; cy: number }> = {};
+      for (const d of topology.devices) {
+        const el = deviceRefs.current[d.id];
+        if (!el) continue;
+        const r = el.getBoundingClientRect();
+        deviceRects[d.id] = { cx: r.left + r.width / 2 - cRect.left, cy: r.top + r.height / 2 - cRect.top };
+      }
+      const lines: { id: string; x1: number; y1: number; x2: number; y2: number; up: boolean }[] = [];
+      for (const link of topology.links) {
+        const a = deviceRects[link.a.device];
+        const b = deviceRects[link.b.device];
+        if (!a || !b) continue;
+        // Determine if any endpoint interface is down
+        const aDev = topology.devices.find(d => d.id === link.a.device);
+        const bDev = topology.devices.find(d => d.id === link.b.device);
+        const aIface = aDev?.interfaces.find(i => i.name === link.a.iface);
+        const bIface = bDev?.interfaces.find(i => i.name === link.b.iface);
+        const isUp = (aIface?.status !== "down" && bIface?.status !== "down");
+        lines.push({ id: link.id, x1: a.cx, y1: a.cy, x2: b.cx, y2: b.cy, up: isUp });
+      }
+      setLinkLines(lines);
+    };
+    recalc();
+    window.addEventListener("resize", recalc);
+    const id = setInterval(recalc, 200); // catch layout shifts
+    return () => { window.removeEventListener("resize", recalc); clearInterval(id); };
+  }, [topology]);
 
   return (
-    <div className="p-6 border-b border-border flex-1">
-      <h3 className="font-mono text-sm font-semibold mb-6 flex items-center gap-2">
+    <div className="p-6 border-b border-border flex-1 relative" ref={containerRef}>
+      <h3 className="font-mono text-sm font-semibold mb-6 flex items-center gap-2 relative z-10">
         <Network className="w-4 h-4" /> Fabric Topology
       </h3>
 
+      {/* SVG link overlay */}
+      {linkLines.length > 0 && (
+        <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
+          {linkLines.map(l => (
+            <line
+              key={l.id}
+              x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
+              stroke={l.up ? "#1fac71" : "#e2231a"}
+              strokeWidth={2}
+              strokeDasharray={l.up ? "0" : "6 4"}
+              className={cn("transition-all duration-300", !l.up && "animate-pulse")}
+            />
+          ))}
+        </svg>
+      )}
+
       {topology.devices.length === 0 ? (
-        <div className="flex flex-col items-center justify-center text-center gap-3 py-12 px-4 border border-dashed border-border rounded-md">
+        <div className="flex flex-col items-center justify-center text-center gap-3 py-12 px-4 border border-dashed border-border rounded-md relative z-10">
           <Network className="w-8 h-8 text-muted-foreground" />
           <div className="text-sm text-muted-foreground leading-relaxed">
             No topology defined yet.
@@ -436,13 +528,15 @@ function TopologyView({ topology, onSelectInterface }: { topology: Topology, onS
           </div>
         </div>
       ) : (
-        <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="space-y-8 animate-in fade-in duration-500 relative z-10">
           {groups.map(g => (
             <div key={g.role} className="space-y-3">
               <div className="text-xs text-muted-foreground font-mono uppercase text-center tracking-widest">{g.role} layer</div>
               <div className="flex justify-center gap-4 flex-wrap">
                 {g.devices.map(d => (
-                  <DeviceNode key={d.id} device={d} onSelectInterface={onSelectInterface} />
+                  <div key={d.id} ref={el => { deviceRefs.current[d.id] = el; }}>
+                    <DeviceNode device={d} onSelectInterface={onSelectInterface} />
+                  </div>
                 ))}
               </div>
             </div>
@@ -458,7 +552,7 @@ function DeviceNode({ device, onSelectInterface }: { device: NetDevice, onSelect
   
   return (
     <div className={cn(
-      "border rounded-md bg-secondary flex flex-col items-center p-3 transition-colors",
+      "border rounded-md bg-secondary flex flex-col items-center p-3 transition-colors relative z-10",
       hasDown ? "border-destructive/50 shadow-[0_0_10px_rgba(226,35,26,0.2)]" : "border-border hover:border-primary/50"
     )}>
       <Terminal className={cn("w-6 h-6 mb-2", hasDown ? "text-destructive" : "text-primary")} />
