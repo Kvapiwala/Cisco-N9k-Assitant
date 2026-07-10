@@ -41,3 +41,8 @@ externalPort = 3000
 deploymentTarget = "autoscale"
 run = ["npm", "run", "start"]
 build = ["npm", "run", "build"]
+
+[userenv]
+
+[userenv.shared]
+GithubKey = "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"
